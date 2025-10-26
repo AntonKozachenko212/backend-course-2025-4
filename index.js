@@ -1,39 +1,66 @@
 import { Command } from 'commander';
-import fs from 'fs';
+import fs from 'fs/promises';
 import http from 'http';
+import { XMLBuilder } from 'fast-xml-parser';
+import path from 'path';
+import url from 'url';
 
 const program = new Command();
 
-const requestListener = (req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('Working');
-};
-
-const server = new http.Server(requestListener);
-
 program
-  .name('lab4')
-  .version('1.0')
-  .requiredOption('-i, --input <file>')
-  .requiredOption('-h, --host <ip>')
-  .requiredOption('-p, --port <number>');
+  .requiredOption('-i, --input <path>')
+  .requiredOption('-h, --host <address>')
+  .requiredOption('-p, --port <number>', parseInt)
+  .action(async ({ input, host, port }) => {
+    const inputPath = path.resolve(process.cwd(), input);
 
-program.parse(process.argv);
-const options = program.opts();
+    try {
+      await fs.access(inputPath);
+    } catch {
+      console.error(`Input file not found`);
+      process.exit(1);
+    }
 
-if (!fs.existsSync(options.input)) {
-  console.error(`Input file not found at ${options.input}`);
-  process.exit(1);
-}
+    const builder = new XMLBuilder({ format: true });
 
-const host = options.host;
-const port = parseInt(options.port, 10);
+    const server = new http.Server(async (req, res) => {
+      try {
+        const data = await fs.readFile(inputPath, 'utf8');
+        const json = JSON.parse(data);
 
-if (isNaN(port) || port <= 0) {
-  console.error('Invalid port number provided.');
-  process.exit(1);
-}
+        const { mfo, normal } = url.parse(req.url, true).query;
 
-server.listen(port, host, () => {
-  console.log(`Server works at: http://${host}:${port}`);
-});
+        let filtered = json;
+        if (normal === 'true') {
+          filtered = filtered.filter(b => b.COD_STATE?.toString() === '1');
+        }
+
+        const banksXml = filtered.map(b => {
+          const bankObj = {
+            mfo_code: b.MFO,
+            name: b.SHORTNAME,
+            state_code: b.COD_STATE
+          };
+          if (mfo === 'true') {
+            bankObj.mfo_code = b.MFO;
+          }
+          return bankObj;
+        });
+
+        const xmlData = builder.build({ banks: { bank: banksXml } });
+
+        res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' });
+        res.end(xmlData);
+      } catch (err) {
+        console.error(err);
+        res.writeHead(500);
+        res.end('Internal Server Error');
+      }
+    });
+
+    server.listen(port, host, () => {
+      console.log(`Server running at http://${host}:${port}/`);
+    });
+  });
+
+program.parse();
