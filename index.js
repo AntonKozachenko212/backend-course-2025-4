@@ -37,7 +37,6 @@ program
 
         const banksXml = filtered.map(b => {
           const bankObj = {
-            mfo_code: b.MFO,
             name: b.SHORTNAME,
             state_code: b.COD_STATE
           };
